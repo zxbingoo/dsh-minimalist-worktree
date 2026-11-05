@@ -1,0 +1,6 @@
+node_modules/
+.test-fixtures/
+.mwt-git-fixture-*/
+.agents/worktrees/
+.DS_Store
+*.tgz

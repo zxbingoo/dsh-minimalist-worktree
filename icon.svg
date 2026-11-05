@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <title>Minimalist Worktree</title>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="#173D39"/>
+  <path d="M20 22v20m0-10h16a8 8 0 0 0 8-8v-2" stroke="#9CE0C4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="13" y="12" width="14" height="14" rx="4" fill="#E4F6EC"/>
+  <rect x="13" y="40" width="14" height="14" rx="4" fill="#E4F6EC"/>
+  <rect x="37" y="12" width="14" height="14" rx="4" fill="#9CE0C4"/>
+</svg>

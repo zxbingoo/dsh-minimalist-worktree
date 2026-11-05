@@ -76,9 +76,13 @@ export function createOperations({ table, cwdOf, started, repository, resolveCom
       signal?.throwIfAborted();
       assertEditable(agent); // Sending during validation must not stage a late selection.
       if (cwdOf(agent) !== sourceCwd) throw new Error('The workspace changed while saving. Choose again in the current workspace.');
+      const name = request.mode === 'worktree' ? (previous?.name || await makeName(agent, sourceCwd, signal)) : '';
+      // Naming probes are asynchronous too: never persist after send, cwd change, or cancellation.
+      signal?.throwIfAborted();
+      assertEditable(agent);
+      if (cwdOf(agent) !== sourceCwd) throw new Error('The workspace changed while saving. Choose again in the current workspace.');
       const selection = {
-        mode: request.mode, from: request.from ?? 'HEAD', baseCommit, sourceCwd,
-        name: request.mode === 'worktree' ? (previous?.name || makeName(agent)) : '',
+        mode: request.mode, from: request.from ?? 'HEAD', baseCommit, sourceCwd, name,
         status: 'staged', revision: (previous?.revision ?? 0) + 1, error: '',
       };
       await table.put(agent.id, selection);

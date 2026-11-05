@@ -77,14 +77,16 @@ async function fixture(t) {
       resolveExecutable: async name => { assert.equal(name, 'git'); return '/bin/git'; },
       spawn(options) {
         calls.subprocess.push(options);
-        let text;
-        if (options.argv.includes('--show-toplevel')) text = '/source/repo\n';
+        let text, exitCode = 0;
+        if (options.argv.includes('show-ref')) { text = ''; exitCode = 1; }
+        else if (options.argv.includes('--show-toplevel')) text = '/source/repo\n';
         else if (options.argv.includes('symbolic-ref')) text = 'main\n';
         else if (options.argv.includes('--verify')) text = `${COMMIT}\n`;
+        else if (options.argv.includes('--count=1')) text = '';
         else if (options.argv.includes('for-each-ref')) text = 'refs/heads/main\0main\0\nrefs/remotes/origin/main\0origin/main\0\n';
         else throw new Error(`Unexpected Git read: ${options.argv.join(' ')}`);
         return {
-          done: Promise.resolve({ exitCode: 0, signal: null }),
+          done: Promise.resolve({ exitCode, signal: null }),
           collected: {
             stdout: { readFrom: () => ({ text, lossy: false }) },
             stderr: { readFrom: () => ({ text: '', lossy: false }) },
@@ -203,7 +205,9 @@ check('tool and UI-facing service share snapshots and blank-only selection guard
   const worktree = await f.rpc({ action: 'select', mode: 'worktree', from: 'refs/heads/main', expectedRevision: 1 });
   assert.deepEqual(await f.runTool({ action: 'inspect' }), worktree);
   assert.equal(worktree.selection.baseCommit, COMMIT);
-  assert.match(worktree.selection.name, /^worktree-[0-9a-f-]{36}$/);
+  assert.match(worktree.selection.name, /^dsh\/[a-z]+-[a-z]+$/);
+  assert.ok(f.calls.subprocess.some(call => call.argv.includes('show-ref') && call.argv.at(-1) === 'refs/heads/dsh'));
+  assert.ok(f.calls.subprocess.some(call => call.argv.includes('--count=1') && call.argv.at(-1) === `refs/heads/${worktree.selection.name}`));
   assert.equal(f.calls.creates.length, 0);
   assert.equal(f.cwds.get(f.session.id), '/source/repo');
   f.begun.set(f.session.id, true);

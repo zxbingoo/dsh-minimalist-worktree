@@ -1,6 +1,6 @@
 {
   "name": "dsh-minimalist-worktree",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Two new-session controls: use the local checkout or start an isolated Git worktree from a selected branch.",
@@ -13,7 +13,7 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "core.js", "git.js", "client.js", "src/client.js", "build.mjs", "test/*.test.mjs", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
+  "files": ["index.js", "core.js", "git.js", "names.js", "client.js", "src/client.js", "build.mjs", "test/*.test.mjs", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
   "dependencies": { "zod": "4.4.3" },
   "peerDependencies": { "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5" },
   "scripts": {

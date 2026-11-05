@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TypertRemoteService, RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { NS, SERVICE, STARTED, createOperations, foldStarted } from './core.js';
 import { createGitReader } from './git.js';
+import { createWorktreeNamer } from './names.js';
 
 export const inject = ['typert', 'storageDomain', 'sessionProjections', 'workingDirectory', 'fs', 'subprocess', 'sandbox', 'sandboxPolicy', 'worktrees'];
 
@@ -98,7 +98,7 @@ export async function apply(ctx) {
     },
     repository: git.inspect, resolveCommit: git.resolveCommit,
     createWorktree: (agent, request, signal) => provider(agent, 'worktrees').create(agent, request, signal),
-    makeName: () => `worktree-${randomUUID()}`,
+    makeName: createWorktreeNamer({ isAvailable: git.branchAvailable }),
   });
   const service = new MinimalistWorktreeService(ctx, operations, lifetime);
   const codec = (name, schema) => ({ mode: 'strict', typeSymbol: `${NS}#${name}`, create: () => schema });

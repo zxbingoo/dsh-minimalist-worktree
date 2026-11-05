@@ -107,7 +107,7 @@ function adapter(f, options = {}) {
       signal.throwIfAborted();
       const confined = [argv[0], '-c', 'minimalist.testConfined=true', ...argv.slice(1)];
       confineCalls.push({ argv, policy: actualPolicy, signal, confined });
-      if (options.deny) throw options.deny;
+      if (options.deny && confineCalls.length >= (options.denyAt ?? 1)) throw options.deny;
       return { argv: confined };
     } },
     fs: {
@@ -324,6 +324,74 @@ test('revisions are literal argv, including option-like invalid refs, with early
   assertReaped(a.calls);
 });
 
+test('branchAvailable permits an unused generated name with two bounded read-only argv probes', TEST_OPTIONS, async t => {
+  const f = await fixture(t);
+  const repo = await repository(f);
+  const a = adapter(f);
+  const controller = new AbortController();
+  assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird', controller.signal), true);
+  assert.equal(a.calls.length, 2, 'the missing dsh ancestor (exit 1) must allow the candidate probe');
+  assert.deepEqual(a.calls[0].spec.argv.slice(-4), ['show-ref', '--verify', '--quiet', 'refs/heads/dsh']);
+  assert.deepEqual(a.calls[1].spec.argv.slice(-4), ['for-each-ref', '--count=1', '--format=%(refname)', 'refs/heads/dsh/ripe-bird']);
+  assert.equal(a.calls[0].spec.signal, a.calls[1].spec.signal, 'both probes share one bounded operation signal');
+  assert.notEqual(a.calls[0].spec.signal, controller.signal, 'the caller signal must be combined with the read deadline');
+  assert.equal(a.policyCalls.length, 2);
+  assert.equal(a.confineCalls.length, 0);
+  assert.equal(a.fsCalls.length, 0, 'availability must not resolve or allocate a worktree directory');
+  assertReaped(a.calls);
+});
+
+for (const [description, existing, available] of [
+  ['rejects an exact local branch conflict', 'dsh/ripe-bird', false],
+  ['rejects a descendant local branch conflict', 'dsh/ripe-bird/nested', false],
+  ['ignores an unrelated near-prefix local branch', 'dsh/ripe-birdie', true],
+]) {
+  test(`branchAvailable ${description}`, TEST_OPTIONS, async t => {
+    const f = await fixture(t);
+    const repo = await repository(f);
+    await git(f, repo.cwd, ['branch', existing]);
+    const refs = await git(f, repo.cwd, ['show-ref', '--head']);
+    const a = adapter(f);
+    assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird'), available);
+    assert.equal(a.calls.length, 2);
+    assert.deepEqual(a.calls[1].spec.argv.slice(-4), ['for-each-ref', '--count=1', '--format=%(refname)', 'refs/heads/dsh/ripe-bird']);
+    assert.equal(await git(f, repo.cwd, ['show-ref', '--head']), refs, 'probing availability must never allocate a branch');
+    assertReaped(a.calls);
+  });
+}
+
+test('branchAvailable reports a dsh namespace ancestor as an actionable error', TEST_OPTIONS, async t => {
+  const f = await fixture(t);
+  const repo = await repository(f);
+  await git(f, repo.cwd, ['branch', 'dsh']);
+  const a = adapter(f);
+  await assert.rejects(a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird'), /branch dsh already exists/i);
+  assert.equal(a.calls.length, 1, 'a conflicting ancestor must stop before enumerating candidate refs');
+  assert.deepEqual(a.calls[0].spec.argv.slice(-4), ['show-ref', '--verify', '--quiet', 'refs/heads/dsh']);
+  assertReaped(a.calls);
+});
+
+test('branchAvailable rejects malformed generated names before resolving services or launching Git', TEST_OPTIONS, async t => {
+  const f = await fixture(t);
+  const marker = path.join(f.root, 'must-not-be-created');
+  const a = adapter(f);
+  for (const name of [
+    undefined, null, 0, true, {}, [], new String('dsh/ripe-bird'), '',
+    'dsh', 'ripe-bird', 'DSH/ripe-bird', 'dsh/Ripe-bird', 'dsh/ripe-Bird',
+    'dsh/ripe', 'dsh/-bird', 'dsh/ripe-', 'dsh/ripe-bird-extra', 'dsh/ripe_bird',
+    'dsh/ripe-1', 'dsh//ripe-bird', 'dsh/ripe-bird/nested',
+    ' dsh/ripe-bird', 'dsh/ripe-bird ', 'dsh/ripe-bird\n', 'dsh/ripe-bird\r',
+    'dsh/ripe-bird\r\n', 'dsh/ripe-bird\u2028', 'dsh/ripe-bird\u2029', 'dsh/ripe-\0bird',
+    '--help', `dsh/ripe-bird; touch ${marker}`, `$(touch ${marker})`,
+  ]) {
+    await assert.rejects(a.reader.branchAvailable(a.agent, f.root, name), { name: 'TypeError' }, `invalid name: ${String(name)}`);
+  }
+  assert.equal(a.requestedServices.length, 0, 'malformed names must be rejected before any provider lookup');
+  assert.equal(a.executableCalls.length, 0);
+  assert.equal(a.calls.length, 0);
+  await assert.rejects(lstat(marker), { code: 'ENOENT' });
+});
+
 test('resolved commit stays pinned when its source branch moves later', TEST_OPTIONS, async t => {
   const f = await fixture(t);
   const repo = await repository(f);
@@ -364,6 +432,7 @@ test('inspection never changes tracked, staged, untracked files, source HEAD, or
   const a = adapter(f);
   assert.equal((await a.reader.inspect(a.agent, repo.cwd)).available, true);
   assert.equal(await a.reader.resolveCommit(a.agent, repo.cwd, 'refs/heads/main'), repo.commit);
+  assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird'), true);
   await assert.rejects(a.reader.resolveCommit(a.agent, repo.cwd, '--not-a-ref'), GitReadError);
   assert.deepEqual(await sourceState(), before);
   for (const { spec } of a.calls) {
@@ -373,6 +442,44 @@ test('inspection never changes tracked, staged, untracked files, source HEAD, or
     assert.equal(spec.env.GIT_NO_LAZY_FETCH, '1');
     assert.equal(spec.env.GIT_TERMINAL_PROMPT, '0');
   }
+  assertReaped(a.calls);
+});
+
+test('native Git supports a generated slash branch and nested worktree without changing source HEAD or files', TEST_OPTIONS, async t => {
+  const f = await fixture(t);
+  const repo = await repository(f);
+  const tracked = path.join(repo.cwd, 'tracked.txt');
+  const committed = await readFile(tracked);
+  await writeFile(tracked, 'Source staged content\n');
+  await git(f, repo.cwd, ['add', '--', 'tracked.txt']);
+  await writeFile(tracked, 'Source staged content\nSource unstaged content\n');
+  const untracked = path.join(repo.cwd, 'untracked source notes.txt');
+  await writeFile(untracked, 'Source-only notes must remain unchanged.\n');
+  async function sourceState() {
+    return {
+      tracked: await readFile(tracked),
+      untracked: await readFile(untracked),
+      head: await readFile(path.join(repo.cwd, '.git', 'HEAD')),
+      index: await readFile(path.join(repo.cwd, '.git', 'index')),
+      commit: (await git(f, repo.cwd, ['rev-parse', 'HEAD'])).trim(),
+    };
+  }
+  const before = await sourceState();
+  const name = 'dsh/ripe-bird';
+  const worktree = path.join(repo.cwd, '.agents', 'worktrees', name);
+  assert.ok(worktree.startsWith(`${f.root}${path.sep}`), 'native worktree must stay inside this owned fixture');
+  const a = adapter(f);
+  assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, name), true);
+  await mkdir(path.dirname(worktree), { recursive: true });
+  await git(f, repo.cwd, ['worktree', 'add', '--quiet', '-b', name, worktree, repo.commit]);
+  assert.equal(await realpath(worktree), worktree);
+  assert.ok((await lstat(path.join(worktree, '.git'))).isFile(), 'a linked worktree uses a native Git gitfile');
+  assert.equal((await git(f, worktree, ['symbolic-ref', '--short', 'HEAD'])).trim(), name);
+  assert.equal((await git(f, worktree, ['rev-parse', 'HEAD'])).trim(), repo.commit);
+  assert.deepEqual(await readFile(path.join(worktree, 'tracked.txt')), committed);
+  await assert.rejects(lstat(path.join(worktree, path.basename(untracked))), { code: 'ENOENT' });
+  assert.deepEqual(await sourceState(), before, 'creating a worktree must preserve the dirty source checkout');
+  assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, name), false);
   assertReaped(a.calls);
 });
 
@@ -391,6 +498,9 @@ test('Git selector environment is cleared and restricted policy/FS adapters rece
   assert.equal(value.available, true);
   assert.equal(value.root, repo.cwd);
   assert.equal(value.commit, repo.commit);
+  assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird'), true);
+  assert.deepEqual(a.calls.at(-2).spec.argv.slice(-4), ['show-ref', '--verify', '--quiet', 'refs/heads/dsh']);
+  assert.deepEqual(a.calls.at(-1).spec.argv.slice(-4), ['for-each-ref', '--count=1', '--format=%(refname)', 'refs/heads/dsh/ripe-bird']);
   assert.equal(a.confineCalls.length, a.calls.length);
   assert.equal(a.policyCalls.length, a.calls.length);
   for (let i = 0; i < a.calls.length; i += 1) {
@@ -423,6 +533,20 @@ test('sandbox denial is not retried outside the policy boundary', TEST_OPTIONS, 
   assert.equal(a.calls.length, 0);
 });
 
+test('branchAvailable propagates sandbox denial at either probe without returning false or retrying', TEST_OPTIONS, async t => {
+  const f = await fixture(t);
+  const repo = await repository(f);
+  for (const denyAt of [1, 2]) {
+    const denial = new Error(`fixture denied availability probe ${denyAt}`);
+    const a = adapter(f, { mode: 'workspace-write', deny: denial, denyAt });
+    await assert.rejects(a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird'), error => error === denial);
+    assert.equal(a.confineCalls.length, denyAt, 'denial must not cause an unconfined retry');
+    assert.equal(a.calls.length, denyAt - 1);
+    assert.equal(f.running.size, 0);
+    if (a.calls.length) assertReaped(a.calls);
+  }
+});
+
 test('missing Git executable is unknown and never treated as a confirmed nonrepository', TEST_OPTIONS, async t => {
   const f = await fixture(t);
   const missing = Object.assign(new Error('fixture Git executable not found'), { code: 'ENOENT' });
@@ -435,6 +559,8 @@ test('missing Git executable is unknown and never treated as a confirmed nonrepo
   assert.equal(a.executableCalls.length, 1);
   await assert.rejects(a.reader.resolveCommit(a.agent, f.root, 'HEAD'), error => error === missing);
   assert.equal(a.executableCalls.length, 2);
+  await assert.rejects(a.reader.branchAvailable(a.agent, f.root, 'dsh/ripe-bird'), error => error === missing);
+  assert.equal(a.executableCalls.length, 3);
   assert.equal(a.confineCalls.length, 0);
   assert.equal(a.calls.length, 0, 'lookup failure must not launch a fallback process');
 });
@@ -448,6 +574,7 @@ test('caller cancellation propagates before launch and during a real Git process
   const initial = adapter(f);
   await assert.rejects(initial.reader.inspect(initial.agent, repo.cwd, aborted.signal), error => error === reason);
   await assert.rejects(initial.reader.resolveCommit(initial.agent, repo.cwd, 'HEAD', aborted.signal), error => error === reason);
+  await assert.rejects(initial.reader.branchAvailable(initial.agent, repo.cwd, 'dsh/ripe-bird', aborted.signal), error => error === reason);
   assert.equal(initial.requestedServices.length, 0);
   for (const action of ['inspect', 'resolveCommit']) {
     const controller = new AbortController();
@@ -463,11 +590,28 @@ test('caller cancellation propagates before launch and during a real Git process
   }
 });
 
-test('branch enumeration is bounded and reports truncation', TEST_OPTIONS, async t => {
+test('branchAvailable propagates cancellation during either native probe and reaps each child', TEST_OPTIONS, async t => {
+  const f = await fixture(t);
+  const repo = await repository(f);
+  for (const cancelAt of [1, 2]) {
+    const controller = new AbortController();
+    const reason = new Error(`fixture cancelled availability probe ${cancelAt}`);
+    let spawned = 0;
+    const a = adapter(f, { onSpawn: () => { if (++spawned === cancelAt) controller.abort(reason); } });
+    await assert.rejects(a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird', controller.signal), error => error === reason);
+    assert.equal(a.calls.length, cancelAt, 'cancellation must stop any subsequent probe');
+    assert.ok(a.calls.every(({ spec }) => spec.signal.aborted));
+    assert.equal(f.running.size, 0);
+    assertReaped(a.calls);
+  }
+});
+
+test('branch enumeration is bounded while branchAvailable probes refs beyond its truncated snapshot', TEST_OPTIONS, async t => {
   const f = await fixture(t);
   const repo = await repository(f);
   const commands = Array.from({ length: BRANCH_LIMIT + 2 }, (_, i) =>
-    `update refs/heads/many/${String(i).padStart(4, '0')} ${repo.commit}\n`).join('');
+    `update refs/heads/aaa/${String(i).padStart(4, '0')} ${repo.commit}\n`).join('')
+    + `update refs/heads/dsh/ripe-bird ${repo.commit}\n`;
   await git(f, repo.cwd, ['update-ref', '--stdin'], commands);
   const a = adapter(f);
   const value = await a.reader.inspect(a.agent, repo.cwd);
@@ -475,7 +619,13 @@ test('branch enumeration is bounded and reports truncation', TEST_OPTIONS, async
   assert.equal(value.available, true);
   assert.equal(value.branches.length, BRANCH_LIMIT);
   assert.equal(value.truncated, true);
+  assert.ok(!value.branches.some(branch => branch.ref === 'refs/heads/dsh/ripe-bird'));
   const enumeration = a.calls.find(({ spec }) => spec.argv.includes('for-each-ref'));
   assert.ok(enumeration.spec.argv.includes(`--count=${BRANCH_LIMIT + 1}`));
+  const inspectionCalls = a.calls.length;
+  assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/ripe-bird'), false, 'a branch hidden from the display snapshot still conflicts');
+  assert.equal(await a.reader.branchAvailable(a.agent, repo.cwd, 'dsh/tidy-mole'), true);
+  assert.equal(a.calls.length, inspectionCalls + 4, 'each candidate must probe Git independently of the snapshot');
+  assert.deepEqual(a.calls.at(-1).spec.argv.slice(-4), ['for-each-ref', '--count=1', '--format=%(refname)', 'refs/heads/dsh/tidy-mole']);
   assertReaped(a.calls);
 });

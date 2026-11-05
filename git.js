@@ -58,6 +58,15 @@ export function createGitReader(provider) {
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit)) throw new Error('Git returned an invalid commit object name.');
     return commit;
   }
+  /** Probe complete local refs, not the UI's truncated branch list. Never allocate. */
+  async function branchAvailable(agent, cwd, name, callerSignal) {
+    if (typeof name !== 'string' || name !== name.trim() || !/^dsh\/[a-z]+-[a-z]+$/.test(name)) throw new TypeError('Invalid generated worktree name.');
+    const signal = bounded(callerSignal);
+    const ancestor = await run(agent, cwd, ['show-ref', '--verify', '--quiet', 'refs/heads/dsh'], signal, [0, 1]);
+    if (ancestor.exitCode === 0) throw new Error('Cannot create dsh/<adjective>-<noun>: branch dsh already exists. Rename that branch before choosing a worktree.');
+    const output = await run(agent, cwd, ['for-each-ref', '--count=1', '--format=%(refname)', `refs/heads/${name}`], signal);
+    return output.text.trim() === '';
+  }
   async function inspect(agent, cwd, callerSignal) {
     const signal = bounded(callerSignal);
     const empty = { kind: 'unknown', available: false, root: '', branch: '', commit: '', branches: [], truncated: false, reason: '' };
@@ -96,5 +105,5 @@ export function createGitReader(provider) {
       return { ...empty, kind, root, branch, commit, reason: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000) };
     }
   }
-  return { inspect, resolveCommit };
+  return { inspect, resolveCommit, branchAvailable };
 }

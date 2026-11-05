@@ -62,10 +62,10 @@ function fixture() {
         ? hooks.createWorktree(target, request, signal)
         : finishCreation(target, request, signal);
     },
-    makeName(target) {
+    async makeName(target, cwd, signal) {
       const name = `fresh-${calls.names.length + 1}`;
-      calls.names.push({ agent: target, name });
-      return name;
+      calls.names.push({ agent: target, cwd, signal, name });
+      return hooks.makeName ? hooks.makeName(target, cwd, signal) : name;
     },
   };
   return {
@@ -214,6 +214,76 @@ check('switching back to Local clears the worktree plan without changing branche
   assert.equal(f.calls.creates.length, 0);
   assert.equal(f.agent.cwd, '/source/repo');
   assert.equal(f.repositoryState.branch, 'main');
+});
+
+check('async naming receives the source cwd and signal and fixes a dsh word pair before allocation', async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  f.hooks.makeName = async (agent, cwd, signal) => {
+    assert.equal(agent, f.agent);
+    assert.equal(cwd, '/source/repo');
+    assert.equal(signal, controller.signal);
+    assert.equal(f.records.size, 0);
+    return 'dsh/ripe-bird';
+  };
+  const value = await select(f, {}, controller.signal);
+  assert.equal(value.selection.name, 'dsh/ripe-bird');
+  assert.equal(f.calls.creates.length, 0);
+  await f.restart().prepare(f.agent);
+  assert.equal(f.calls.creates[0].request.name, 'dsh/ripe-bird');
+});
+
+for (const change of ['send', 'cwd', 'cancel']) {
+  check(`${change} during async naming cannot persist or allocate a late worktree choice`, async t => {
+    const f = fixture();
+    const entered = deferred(), release = deferred();
+    const controller = new AbortController();
+    t.after(() => release.resolve());
+    f.hooks.makeName = async () => { entered.resolve(); await release.promise; return 'dsh/ripe-bird'; };
+    const pending = select(f, {}, controller.signal);
+    const failure = change === 'send' ? /before the first message/ : change === 'cwd' ? /workspace changed while saving/ : /naming cancelled/;
+    const rejected = assert.rejects(pending, failure);
+    await entered.promise;
+    if (change === 'send') f.agent.hasStarted = true;
+    if (change === 'cwd') f.agent.cwd = '/another/repository';
+    if (change === 'cancel') controller.abort(new Error('naming cancelled'));
+    release.resolve();
+    await rejected;
+    assert.equal(f.records.size, 0);
+    assert.equal(f.calls.creates.length, 0);
+  });
+}
+
+check('naming failure never persists a plan or attempts allocation', async () => {
+  const f = fixture();
+  const reason = new Error('name probe denied');
+  f.hooks.makeName = () => { throw reason; };
+  await assert.rejects(select(f), error => error === reason);
+  assert.equal(f.records.size, 0);
+  assert.equal(f.calls.creates.length, 0);
+});
+
+check('a saved legacy UUID name remains stable across new naming code and restart', async () => {
+  const f = fixture();
+  const legacy = 'worktree-550e8400-e29b-41d4-a716-446655440000';
+  f.hooks.makeName = async () => legacy;
+  await select(f);
+  f.hooks.makeName = () => { throw new Error('must not replace saved names'); };
+  const reselected = await select(f, { from: 'refs/heads/next', expectedRevision: 1 });
+  assert.equal(reselected.selection.name, legacy);
+  await f.restart().prepare(f.agent);
+  assert.equal(f.calls.creates[0].request.name, legacy);
+  assert.equal(f.calls.names.length, 1);
+});
+
+check('Local then New worktree requests a new name rather than reusing the old choice', async () => {
+  const f = fixture();
+  const first = await select(f);
+  await select(f, { mode: 'local', expectedRevision: 1 });
+  const second = await select(f, { expectedRevision: 2 });
+  assert.notEqual(second.selection.name, first.selection.name);
+  assert.equal(f.calls.names.length, 2);
+  assert.equal(f.calls.creates.length, 0);
 });
 
 check('a fresh non-Git workspace stays implicitly Local without saving or allocating', async () => {

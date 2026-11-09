@@ -30,6 +30,29 @@ test('existing worktree descendants are allowed, unexpected cwd and changed bran
   f.setCwd('/elsewhere'); assert.equal((await f.ops.inspect(f.agent)).blocked, true); assert.equal((await f.ops.inspect(f.agent)).canRebuild, false);
   const g = fixture({ exists: true, cwd: '/pool/tree', treeBranch: 'other' }); await assert.rejects(g.ops.assertReady(g.agent));
 });
+test('new checkout setup is preparation, not recovery; model steps still wait', async () => {
+  const f = fixture({ exists: true, cwd: '/pool/tree' });
+  f.values.get('s').initialization = { status: 'running', reason: '' };
+  const state = await f.ops.inspect(f.agent);
+  assert.equal(state.blocked, false); assert.equal(state.reason, '');
+  assert.equal(state.canUseSource, false); assert.equal(state.canRebuild, false);
+  await assert.rejects(f.ops.assertReady(f.agent), /initialization is running/);
+  await assert.rejects(f.ops.choose(f.agent, { action: 'source', token: state.token, confirmSource: true }), /state changed/);
+  f.values.get('s').initialization = { status: 'succeeded', reason: '' };
+  assert.equal((await f.ops.assertReady(f.agent)).blocked, false);
+  assert.deepEqual(f.calls, []);
+});
+test('setup cannot hide a missing checkout, wrong cwd, changed branch or setup failure', async () => {
+  for (const options of [{}, { exists: true, cwd: '/repo' }, { exists: true, cwd: '/pool/tree', treeBranch: 'other' }]) {
+    const f = fixture(options); f.values.get('s').initialization = { status: 'running', reason: '' };
+    assert.equal((await f.ops.inspect(f.agent)).blocked, true);
+    await assert.rejects(f.ops.assertReady(f.agent));
+  }
+  const f = fixture({ exists: true, cwd: '/pool/tree' });
+  f.values.get('s').initialization = { status: 'failed', reason: 'setup failed' };
+  assert.equal((await f.ops.inspect(f.agent)).blocked, true);
+  await assert.rejects(f.ops.assertReady(f.agent));
+});
 test('source choice requires token plus second confirmation and source HEAD/branch changes invalidate approval', async () => {
   const f = fixture(), state = await f.ops.inspect(f.agent);
   await assert.rejects(f.ops.choose(f.agent, { action: 'source', token: state.token }));

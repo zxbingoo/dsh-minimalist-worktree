@@ -549,8 +549,6 @@ export function createChangesUI(React, ctx, t) {
       content);
   }
 
-  function View(slot) { return h(Panel, { key: slot.sessionId, slot }); }
-
   return {
     invalidate: sessionId => resource.invalidate(sessionId),
     install() {
@@ -561,7 +559,7 @@ export function createChangesUI(React, ctx, t) {
       });
       // The host owns row hover timing, placement and dismissal; no extra icon or click target.
       ctx.slots.inject('sidebar.session.row.hover', () => ctx.slots.register({ name: 'sidebar.session.row.hover', id: 'dsh-minimalist-worktree.directory', order: 0 }, SessionHover));
-      ctx.slots.inject('conversation.view', () => ctx.slots.register({ name: 'conversation.view', id: 'dsh-minimalist-worktree.changes', order: 40, label: () => t('changes.title') }, View));
+      // File-panel changes/diff navigation replaces the former top-level Changes tab.
     },
   };
 }

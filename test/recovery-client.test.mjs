@@ -16,6 +16,41 @@ test('recovery notice is additive, no original header or chat replacement', () =
  const calls = []; const ctx = { slots: { inject: (name, fn) => { calls.push(name); return fn(); }, register: options => calls.push(options) } };
  createRecoveryUI({}, ctx, key => key).install(); assert.equal(calls[0], 'conversation.input.dock'); assert.equal(calls[1].id, 'dsh-minimalist-worktree.recovery');
 });
+test('overlapping focus inspections cannot restore an older recovery notice or error', async () => {
+  const previousWindow = globalThis.window;
+  const listeners = new Map(), pending = [], setters = [], effects = [];
+  globalThis.window = { addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: key => listeners.delete(key) };
+  const React = {
+    createElement: () => null,
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
+    useState: initial => { const cell = { value: initial }; setters.push(cell); return [initial, value => { cell.value = value; }]; },
+    useEffect: fn => effects.push(fn),
+  };
+  let Component;
+  const ctx = {
+    locale: { getSnapshot: () => 'zh' }, connection: { generation: { getSnapshot: () => ({ id: 1 }) },
+      rpc: { call: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) } },
+    slots: { inject: (_name, fn) => fn(), register: (_options, component) => { Component = component; } },
+  };
+  let cleanup;
+  try {
+    createRecoveryUI(React, ctx, key => key).install();
+    Component({ sessionId: 's', useAccess: () => true, useProjection: () => 0 });
+    cleanup = effects[0]();
+    const newer = listeners.get('focus')();
+    pending[1].resolve({ ok: true, value: { blocked: false } }); await newer;
+    pending[0].resolve({ ok: true, value: { blocked: true } });
+    await Promise.resolve(); await Promise.resolve();
+    assert.deepEqual(setters[0].value, { blocked: false });
+    const oldFailure = listeners.get('focus')(), newest = listeners.get('focus')();
+    pending[3].resolve({ ok: true, value: { blocked: false } }); await newest;
+    pending[2].reject(new Error('stale error')); await oldFailure;
+    assert.equal(setters[1].value, '');
+    const afterUnmount = listeners.get('focus')(); cleanup(); cleanup = undefined;
+    pending[4].resolve({ ok: true, value: { blocked: true } }); await afterUnmount;
+    assert.deepEqual(setters[0].value, { blocked: false });
+  } finally { cleanup?.(); globalThis.window = previousWindow; }
+});
 test('source confirmation and fallback commit are explicit, no auto-resubmit or default mutation', async () => {
  const s = await readFile(new URL('../src/recovery-client.js', import.meta.url), 'utf8');
  assert.ok(s.includes("confirm === 'source'")); assert.ok(s.includes('confirmSource: true')); assert.ok(s.includes('confirmCommit: state.candidateCommit'));

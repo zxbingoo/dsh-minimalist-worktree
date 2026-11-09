@@ -28,9 +28,17 @@ export function createRecoveryUI(React, ctx, t) {
       setState(null); setDone(false); setConfirm(''); setError('');
       if (!allowed || !generation) return;
       const controller = new AbortController();
-      const load = () => ctx.connection.rpc.call('/api', RECOVERY_ENDPOINT, { args: { agentId: slot.sessionId, request: { action: 'inspect' } } }, controller.signal)
-        .then(response => { if (controller.signal.aborted) return; if (!response.ok) throw new Error(response.error?.message || 'Recovery check failed'); setState(response.value); })
-        .catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error)); });
+      let latest = 0;
+      const load = () => {
+        const request = ++latest;
+        return ctx.connection.rpc.call('/api', RECOVERY_ENDPOINT, { args: { agentId: slot.sessionId, request: { action: 'inspect' } } }, controller.signal)
+          .then(response => {
+            if (controller.signal.aborted || request !== latest) return;
+            if (!response.ok) throw new Error(response.error?.message || 'Recovery check failed');
+            setError(''); setState(response.value);
+          })
+          .catch(error => { if (!controller.signal.aborted && request === latest) setError(error instanceof Error ? error.message : String(error)); });
+      };
       load(); window.addEventListener('focus', load);
       return () => { controller.abort(); window.removeEventListener('focus', load); };
     }, [slot.sessionId, allowed, generation, cwd, refresh]);

@@ -15,7 +15,7 @@ test('directory lives in the native Session row hover card, never header, hero o
   for (const slot of ['conversation.session.header.actions', 'conversation.hero.options', 'conversation.input.dock']) {
     assert.ok(!source.includes(`ctx.slots.inject('${slot}'`));
   }
-  assert.ok(source.includes("ctx.slots.inject('conversation.view'"));
+  assert.ok(!source.includes("ctx.slots.inject('conversation.view'"));
 });
 test('hover content is read-only, addressed to the hovered Session, and shows branch plus actual directory', () => {
   const hover = source.slice(source.indexOf('  function SessionHover('), source.indexOf('  function Patch('));

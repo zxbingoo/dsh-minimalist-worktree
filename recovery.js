@@ -98,7 +98,16 @@ export function createRecoveryOperations({ selections, decisions, provider, git 
         base.canRebuild = false; base.canUseSource = false;
       }
       base.blocked = !inExpected;
-      if (['running', 'failed'].includes(selection.initialization?.status)) { base.blocked = true; base.canUseSource = false; base.canRebuild = false; base.reason = `Worktree initialization is ${selection.initialization.status}; inspect the existing failure before continuing.`; }
+      // A created checkout is persisted before setup completes. A healthy checkout
+      // with setup in flight is preparation, not a changed/missing worktree.
+      // Keep recovery mutations disabled; assertReady separately guards model steps.
+      if (['running', 'failed'].includes(selection.initialization?.status)) {
+        base.canUseSource = false; base.canRebuild = false;
+        if (selection.initialization.status === 'failed' || !inExpected) {
+          base.blocked = true;
+          base.reason = `Worktree initialization is ${selection.initialization.status}; inspect the existing failure before continuing.`;
+        }
+      }
       if (decision?.status === 'creating' || decision?.status === 'failed') {
         base.blocked = true; base.canRebuild = false; base.canUseSource = false; base.reason = `Recovery is ${decision.status}; no automatic retry or fallback. ${decision.error}`;
       } else if (!['running', 'failed'].includes(selection.initialization?.status) && decision?.status === 'source' && base.canUseSource && decision.sourceToken === sourceToken && actualCwd === sourceCwd) {
@@ -115,6 +124,9 @@ export function createRecoveryOperations({ selections, decisions, provider, git 
   async function assertReady(agent, signal) {
     const state = await publicInspect(agent, signal);
     if (state.blocked) { const error = new Error(state.reason); error.code = 'worktree-recovery-required'; error.recovery = state; throw error; }
+    if (selections.get(agent.id)?.initialization?.status === 'running') {
+      throw new Error('Worktree initialization is running; wait for preparation to complete before continuing.');
+    }
     return state;
   }
   async function choose(agent, request, signal) {

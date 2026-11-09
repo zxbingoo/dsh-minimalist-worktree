@@ -70,6 +70,16 @@ const BROWSER_CSS = `
 
 export function createBrowserUI(React, ctx, t, parsePatch, previewFactory) {
   const { Preview } = previewFactory(React);
+  // Page-lifetime UI preferences and last confirmed header only; never retain file contents or Git summaries.
+  const browserMemory = new Map();
+  function memoryFor(sessionId, cwd) {
+    const key = JSON.stringify([sessionId, cwd]);
+    if (!browserMemory.has(key)) {
+      if (browserMemory.size >= 64) browserMemory.delete(browserMemory.keys().next().value);
+      browserMemory.set(key, { expanded: [''], listTop: 0 });
+    }
+    return browserMemory.get(key);
+  }
   const h = React.createElement, { useState, useEffect, useMemo, useRef, useSyncExternalStore } = React;
   function ChangeTree({ slot, repository, files, selected, view, onOpen, list }) {
     const fileMap = useRef(new Map());
@@ -102,17 +112,26 @@ export function createBrowserUI(React, ctx, t, parsePatch, previewFactory) {
     return h(Contents, { key: JSON.stringify([slot.sessionId, cwd, generation?.id, access]), slot, cwd, generation, access, turn });
   }
   function Contents({ slot, cwd, generation, access, turn }) {
+    const memory = memoryFor(slot.sessionId, cwd);
     const [mode, setMode] = useState('files'), [scope, setScope] = useState('all'), [wrapLines, setWrapLines] = useState(true), [showTree, setShowTree] = useState(true);
     const [sourceOnly, setSourceOnly] = useState(false), [changeList, setChangeList] = useState(false), [changeFilter, setChangeFilter] = useState('');
     const [collapsedChanges, setCollapsedChanges] = useState(new Set());
     const [refresh, setRefresh] = useState(0), [selected, setSelected] = useState(null), [view, setView] = useState('file');
     const [repositories, setRepositories] = useState({ phase: 'loading', value: null, error: '' });
-    const [summaries, setSummaries] = useState({}), [levels, setLevels] = useState({}), [expanded, setExpanded] = useState(new Set([''])), [filter, setFilter] = useState('');
+    const [summaries, setSummaries] = useState({}), [levels, setLevels] = useState({}), [expanded, setExpanded] = useState(() => new Set(memory.expanded)), [filter, setFilter] = useState('');
     const [content, setContent] = useState({ phase: 'idle', value: null, error: '', key: '' });
     const levelsRef = useRef({}), requests = useRef(new Map()), revisionRef = useRef(`${refresh}:${turn}`), listRef = useRef(null);
     const contentRef = useRef(null), scrolls = useRef(new Map());
+    useEffect(() => { memory.expanded = [...expanded]; }, [expanded]);
+    const treeRestored = useRef(false);
+    useEffect(() => {
+      if (treeRestored.current || mode !== 'files' || !listRef.current) return;
+      const ready = [...expanded].every(path => levels[path]?.value || levels[path]?.phase === 'error');
+      if (ready) { listRef.current.scrollTop = memory.listTop; treeRestored.current = true; }
+    }, [levels, mode]);
     const enabled = !!(access && generation && cwd);
-    const gitMode = browserGitMode(repositories.value);
+    const gitMode = repositories.value ? browserGitMode(repositories.value) : memory.gitKind ?? 'unknown';
+    const branchLabel = repositories.value ? repositories.value.repositories?.[0]?.branch ?? '' : memory.branch ?? '';
     const lastFile = useRef(null), lastChange = useRef(null);
     function selectMode(next) {
       setMode(next);
@@ -131,7 +150,11 @@ export function createBrowserUI(React, ctx, t, parsePatch, previewFactory) {
     useEffect(() => {
       if (!enabled) return;
       const c = new AbortController(); setRepositories(current => ({ ...current, phase: current.value ? 'ready' : 'loading', error: '' }));
-      call({ action: 'repositories' }, c.signal).then(value => { if (!c.signal.aborted) setRepositories({ phase: 'ready', value, error: '' }); })
+      call({ action: 'repositories' }, c.signal).then(value => { if (!c.signal.aborted) {
+        const kind = browserGitMode(value);
+        if (kind !== 'unknown') { memory.gitKind = kind; memory.branch = value.repositories?.[0]?.branch ?? ''; memory.repositoryName = value.root?.split(/[\\/]/).filter(Boolean).at(-1) ?? ''; }
+        setRepositories({ phase: 'ready', value, error: '' });
+      } })
         .catch(error => { if (!c.signal.aborted) setRepositories({ phase: 'error', value: null, error: error.message }); });
       return () => c.abort();
     }, [enabled, refresh, turn]);
@@ -266,12 +289,12 @@ export function createBrowserUI(React, ctx, t, parsePatch, previewFactory) {
     else if (view === 'file' && ['text', 'image'].includes(content.value?.kind)) body = h(Preview, { path: selected.path, text: content.value.text ?? '', kind: content.value.kind, imageData: content.value.imageData, sourceOnly });
     else body = h('div', { className: 'dsh-mwb-empty' }, content.value?.reason || t('browser.previewUnavailable'));
     const selectedStats = selected && summaries[selected.repository ?? '']?.value?.files?.find(file => file.path === selected.diffPath);
-    const rootName = cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd;
+    const rootName = memory.repositoryName || cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd;
     return h('section', { className: 'dsh-mwb', 'data-tree': showTree, 'data-wrap': wrapLines, 'aria-label': t('browser.title') }, h('style', null, BROWSER_CSS),
       h('header', { className: 'dsh-mwb-header' }, h('strong', null, t('browser.title')), h('div', null, h('button', { type: 'button', 'aria-expanded': showTree, onClick: () => setShowTree(value => !value) }, t(showTree ? 'browser.hideTree' : 'browser.showTree')), h('button', { type: 'button', onClick: () => setRefresh(x => x + 1), title: t('browser.refresh') }, '↻'))),
       h('div', { className: 'dsh-mwb-body' },
         h('nav', { className: 'dsh-mwb-nav', 'aria-label': t('browser.navigation') }, h('div', { className: 'dsh-mwb-root', title: cwd }, rootName),
-          gitMode === 'git' && h('div', { className: 'dsh-mwb-branch' }, repositories.value?.repositories?.[0]?.branch || ''),
+          gitMode !== 'none' && h('div', { className: 'dsh-mwb-branch', title: repositories.error || branchLabel, style: { minHeight: 23 } }, branchLabel || '\u00a0'),
           h('div', { className: 'dsh-mwb-tabs', role: 'tablist', 'aria-label': t('browser.navigation') }, (gitMode === 'none' ? ['files'] : ['files', 'changes']).map(tab => h('button', { key: tab, type: 'button', role: 'tab', 'aria-selected': mode === tab, onClick: () => selectMode(tab) }, t(`browser.${tab}`)))),
           h('div', { className: 'dsh-mwb-tools' }, mode === 'changes' ? h('select', { value: scope, 'aria-label': t('browser.scope'), onChange: e => setScope(e.target.value) }, ['all', 'unstaged', 'staged'].map(s => h('option', { key: s, value: s }, t(`changes.scope.${s}`))))
             : h('input', { value: filter, 'aria-label': t('browser.search'), placeholder: t('browser.search'), onChange: e => setFilter(e.target.value) })),
@@ -280,7 +303,7 @@ export function createBrowserUI(React, ctx, t, parsePatch, previewFactory) {
               h('button', { type: 'button', title: t('browser.listView'), 'aria-label': t('browser.listView'), 'aria-pressed': changeList, onClick: () => setChangeList(true) }, h('svg', { viewBox: '0 0 16 16', 'aria-hidden': true }, h('path', { d: 'M5 4h8M5 8h8M5 12h8M2 4h.01M2 8h.01M2 12h.01' }))),
               h('button', { type: 'button', title: t('browser.treeView'), 'aria-label': t('browser.treeView'), 'aria-pressed': !changeList, onClick: () => setChangeList(false) }, h('svg', { viewBox: '0 0 16 16', 'aria-hidden': true }, h('path', { d: 'M3 2v10h3M3 6h3M7 4h6v4H7zM7 10h6v4H7z' })))),
             h('input', { value: changeFilter, placeholder: t('browser.changeSearch'), 'aria-label': t('browser.changeSearch'), onChange: event => setChangeFilter(event.target.value) })),
-          h('div', { className: 'dsh-mwb-list', ref: listRef }, mode === 'files' ? nativeFiles() : changedFiles()),
+          h('div', { className: 'dsh-mwb-list', ref: listRef, onScroll: event => { if (mode === 'files' && [...expanded].every(path => levels[path]?.value || levels[path]?.phase === 'error')) memory.listTop = event.currentTarget.scrollTop; } },  mode === 'files' ? nativeFiles() : changedFiles()),
           gitMode !== 'none' && h('footer', { className: 'dsh-mwb-note' }, t('browser.allEdits'))),
         h('div', { className: 'dsh-mwb-main' }, h('header', { className: 'dsh-mwb-filehead' }, h('code', null, selected?.path ?? selected?.diffPath ?? ''),
           h('div', { className: 'dsh-mwb-filetools' },

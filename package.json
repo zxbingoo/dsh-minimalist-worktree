@@ -1,11 +1,11 @@
 {
   "name": "dsh-minimalist-worktree",
-  "version": "0.1.2",
+  "version": "0.5.17",
   "private": true,
   "type": "module",
-  "description": "Two new-session controls: use the local checkout or start an isolated Git worktree from a selected branch.",
+  "description": "Choose a local or isolated Git worktree, see the current Session directory, and review read-only Git diffs.",
   "license": "MIT",
-  "engines": { "dsh": "0.2.1-rc.5" },
+  "engines": { "dsh": ">=0.2.1-rc.5 <0.3.0-0" },
   "keywords": ["dsh-plugin", "deepseek-harness", "git", "worktree"],
   "exports": {
     ".": "./index.js",
@@ -13,9 +13,10 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "core.js", "git.js", "names.js", "client.js", "src/client.js", "build.mjs", "test/*.test.mjs", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
-  "dependencies": { "zod": "4.4.3" },
-  "peerDependencies": { "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5" },
+  "files": ["index.js", "core.js", "git.js", "git-changes.js", "changes.js", "names.js", "external-worktree.js", "environment.js", "progress.js", "cleanup.js", "archive-cleanup.js", "snapshot-engine.mjs", "snapshot-restore.js", "recovery.js", "browser.js", "src/browser-client.js", "src/file-preview.js", "rebuild-worktree.js", "src/recovery-client.js", "src/progress-client.js", "client.js", "src/client.js", "src/changes-client.js", "build.mjs", "test/*.test.mjs", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
+  "dependencies": { "zod": "4.4.3", "smol-toml": "1.6.0" },
+  "peerDependencies": { "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-rc.5 <0.3.0-0" },
+  "devDependencies": { "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1", "semver": "7.7.3" },
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test test/*.test.mjs"
@@ -25,7 +26,7 @@
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-connection"]
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-chat", "@deepseek-ai/dsh-client-ui-sidebar-files", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-connection"]
     }
   }
 }

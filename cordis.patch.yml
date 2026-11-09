@@ -1,9 +1,6 @@
-# Reuse the shipped, policy-aware checkout creator; do not add a management page
-# or the generic immediate-create tool. Choices share our quiet Host operation.
+# The plugin's creator uses mounted FS/process/sandbox providers for external checkouts.
+# No management page or generic immediate-create tool.
 - insert:
-    - id: minimalist-worktree-provider
-      name: '@deepseek-ai/dsh-experimental-worktree'
-      config: {}
     - id: dsh-minimalist-worktree
       name: dsh-minimalist-worktree
       config: {}

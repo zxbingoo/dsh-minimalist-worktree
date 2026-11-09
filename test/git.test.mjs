@@ -33,7 +33,8 @@ async function fixture(t) {
     const entry = await lstat(absolute);
     assert.ok(entry.isDirectory() && !entry.isSymbolicLink());
     assert.equal(await readFile(path.join(absolute, '.fixture-owner'), 'utf8'), owner);
-    await rm(absolute, { recursive: true, force: false });
+    // Git wrappers may finish writing telemetry just after their child exits.
+    await rm(absolute, { recursive: true, force: false, maxRetries: 3, retryDelay: 100 });
   });
   const home = path.join(root, 'home');
   await mkdir(home);

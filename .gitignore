@@ -1,6 +1,13 @@
 node_modules/
 .test-fixtures/
 .mwt-git-fixture-*/
+.mwt-external-fixture-*/
+.mwt-cleanup-fixture-*/
+.snapshot-test-*/
+.mwt-changes-fixture-*/
+.mwt-browser-fixture-*/
+.mwt-flag-probe-*/
+.mwt-patch-probe-*/
 .agents/worktrees/
 .DS_Store
 *.tgz

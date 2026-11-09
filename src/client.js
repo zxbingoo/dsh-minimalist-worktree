@@ -1,3 +1,9 @@
+import { createChangesUI, parseUnifiedPatch } from './changes-client.js';
+import { createPreparationUI } from './progress-client.js';
+import { createRecoveryUI } from './recovery-client.js';
+import { createBrowserUI } from './browser-client.js';
+import { createFilePreview } from './file-preview.js';
+
 const NS = 'dsh-minimalist-worktree';
 const SLOT = 'conversation.hero.options';
 const ENDPOINT = 'minimalistWorktree/operate';
@@ -168,12 +174,17 @@ export function createClientPlugin(React, dictionaries) {
   }
 
   return {
-    inject: ['slots', 'locale', 'connection'],
+    inject: ['slots', 'locale', 'connection', 'uiConversation'],
     apply(ctx) {
       for (const [locale, dictionary] of Object.entries(dictionaries)) {
         ctx.effect(() => ctx.locale.register(NS, locale, dictionary));
       }
       const t = ctx.locale.bind(NS);
+      const changesUI = createChangesUI(React, ctx, t);
+      changesUI.install();
+      createBrowserUI(React, ctx, t, parseUnifiedPatch, createFilePreview).install();
+      createPreparationUI(React, ctx, t).install();
+      createRecoveryUI(React, ctx, t).install();
       const subscribeLocale = (listener) => ctx.locale.subscribe(listener);
       const getLocale = () => ctx.locale.getSnapshot();
       const subscribeGeneration = (listener) => ctx.connection.generation.subscribe(listener);
@@ -221,6 +232,7 @@ export function createClientPlugin(React, dictionaries) {
             // Only an acknowledged Host snapshot changes the visible/persisted choice.
             snapshot.current = result.value;
             setView({ snapshot: result.value, phase: 'idle', error: null });
+            if (request.action === 'select') changesUI.invalidate(owner.sessionId);
           } catch (error) {
             if (current()) setView((old) => ({ ...old, phase: 'idle', error: {
               key: request.action === 'select' ? 'error.select' : 'error.inspect',

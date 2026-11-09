@@ -1,3 +1,5 @@
+import { preparationError } from './progress.js';
+
 /** Quiet session choices and once-only preparation; no UI or Git implementation here. */
 export const NS = 'dsh-minimalist-worktree';
 export const SERVICE = 'minimalistWorktree';
@@ -29,7 +31,7 @@ export function foldStarted(state, event) {
 }
 
 /** Serializes choices and preparation for the same Session, not unrelated Sessions. */
-export function createOperations({ table, cwdOf, started, repository, resolveCommit, createWorktree, makeName, available = () => true }) {
+export function createOperations({ table, cwdOf, started, repository, resolveCommit, createWorktree, initializeWorktree, progress, makeName, available = () => true }) {
   const queues = new Map();
   function serial(id, task) {
     const previous = queues.get(id) ?? Promise.resolve();
@@ -93,7 +95,13 @@ export function createOperations({ table, cwdOf, started, repository, resolveCom
     return serial(agent.id, async () => {
       signal?.throwIfAborted();
       const plan = table.get(agent.id);
-      if (!plan || plan.mode === 'local' || plan.status === 'created') return;
+      if (!plan || plan.mode === 'local') return;
+      if (plan.status === 'created') {
+        if (['running', 'failed'].includes(plan.initialization?.status)) {
+          throw new Error(`Worktree initialization ${plan.initialization.status}; no automatic retry. ${plan.initialization.reason || 'Previous initialization was interrupted.'}`);
+        }
+        return;
+      }
       if (plan.status !== 'staged') {
         throw new Error(`Worktree preparation is ${plan.status}; no automatic retry or local fallback was performed. ${plan.error || 'A previous attempt may have retained files and a branch.'}`);
       }
@@ -118,15 +126,42 @@ export function createOperations({ table, cwdOf, started, repository, resolveCom
       const creating = { ...plan, status: 'creating' };
       await table.put(agent.id, creating);
       try {
+        await progress?.start(agent);
+        await progress?.update(agent, { cwd: plan.sourceCwd, branch: plan.name, command: '' });
         signal?.throwIfAborted();
         if (cwdOf(agent) !== plan.sourceCwd) throw new Error('The workspace changed while preparing the worktree. No checkout was created. Start a new session and choose again.');
-        const result = await createWorktree(agent, { name: plan.name, from: plan.baseCommit }, signal);
-        await table.put(agent.id, { ...creating, status: 'created', result });
+        const onProgress = progress ? async event => {
+          if (event.text !== undefined) await progress.append(agent, event.text);
+          const patch = Object.fromEntries(Object.entries(event).filter(([key]) => ['phase', 'cwd', 'branch', 'command'].includes(key)));
+          if (Object.keys(patch).length) await progress.update(agent, patch);
+        } : undefined;
+        const result = await createWorktree(agent, { name: plan.name, from: plan.baseCommit }, signal, onProgress);
+        await progress?.update(agent, { cwd: result.path, branch: result.branch ?? plan.name });
+        // Save checkout identity before setup; setup failure must never allocate again.
+        const initializing = { ...creating, status: 'created', result,
+          ...(initializeWorktree ? { initialization: { status: 'running', reason: '' } } : {}) };
+        await table.put(agent.id, initializing);
+        if (initializeWorktree) {
+          try {
+            await progress?.update(agent, { phase: 'initializing', command: '' });
+            const initialization = await initializeWorktree(agent, result, signal, onProgress);
+            await table.put(agent.id, { ...initializing, initialization });
+            if (initialization.reason) await progress?.append(agent, `${initialization.reason}\n`);
+            await progress?.finish(agent, initialization.status === 'skipped' ? 'skipped' : 'succeeded');
+          } catch (error) {
+            const reason = preparationError(error);
+            await table.put(agent.id, { ...initializing, initialization: { status: 'failed', reason } }).catch(() => {});
+            throw error;
+          }
+        } else {
+          await progress?.finish(agent, 'succeeded');
+        }
         return result;
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = preparationError(error);
         // If persistence itself is failing, the durable 'creating' intent still fails closed.
-        await table.put(agent.id, { ...creating, status: 'failed', error: reason }).catch(() => {});
+        if (table.get(agent.id)?.status !== 'created') await table.put(agent.id, { ...creating, status: 'failed', error: reason }).catch(() => {});
+        await progress?.finish(agent, 'failed', reason).catch(() => {});
         throw new Error(`Worktree preparation failed; the model was not started in the local checkout. ${reason}`, { cause: error });
       }
     });

@@ -1,7 +1,10 @@
 {
   "name": "dsh-minimalist-worktree",
   "version": "0.5.17",
-  "private": true,
+  "private": false,
+  "author": "zxbingoo",
+  "homepage": "https://github.com/zxbingoo/dsh-minimalist-worktree#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/zxbingoo/dsh-minimalist-worktree.git" },
   "type": "module",
   "description": "Choose a local or isolated Git worktree, see the current Session directory, and review read-only Git diffs.",
   "license": "MIT",

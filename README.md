@@ -67,7 +67,7 @@ script = "pnpm run setup"
 - 使用执行环境默认 shell 的 `-lc` 参数执行，受原会话沙箱约束；最长 10 分钟，输出各保留 128 KiB，失败携带末尾诊断。安装、fetch、子模块更新等副作用由脚本明确决定，可能联网。没有初始化回滚或静默本地兜底。
 - 在执行前持久保存 created 工作树和 running 初始化状态；成功/跳过/失败状态通过 `dsh_worktree inspect` 可读。失败或进程中断后不自动重复创建或重复执行；先检查保留目录和日志。已有 created 工作树不会补跑初始化。
 - **与 Codex 的对齐边界：** 官方 [Local environments](https://learn.chatgpt.com/docs/environments/local-environment) 确认自动新 worktree setup、平台覆盖及 actions 分离。公开资料未给出完整平台覆盖 TOML、shell、配置来源优先级、重试合同。本版仅兼容 `[setup].script`，未知 setup 字段明确拒绝，不声称完整逐项等同；Windows setup 暂停执行并提示不支持，避免选错脚本。以上 cwd、shell、限制和失败关闭是本插件明确合同。
-- Codex 的 `.worktreeinclude` 文件复制、配置编辑器及平台专属脚本暂未实现，不会复制密钥、.env 或启动开发服务。当前 easiclass-ai-grader-next 没有该环境配置，因此不自动运行其 `pnpm run setup`。
+- Codex 的 `.worktreeinclude` 文件复制、配置编辑器及平台专属脚本暂未实现，不会复制密钥、.env 或启动开发服务。未配置该文件的项目不会自动运行 `pnpm run setup`。
 
 ### 初始化过程展示（0.3.1）
 
